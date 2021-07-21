@@ -3,6 +3,8 @@ module SpinStates
 
 using LinearAlgebra
 
+using StructArrays
+
 ## Individual spin states
 # Spin states, when represeted as a single object, are simply a struct with the
 # the $F^+$, $F^-$, and $Z$ components available as complex values.
@@ -91,17 +93,39 @@ end
 ## Individual spin environments
 # Spin environments, represented as a single object are just a struct
 # with the relaxation parameters available as floating point values.
-#struct SpinEnvironment{T<:AbstractFloat}
-#    t1::T
-#    t2::T
-#end
-#
-#struct Relaxation(T<:AbstractFloat)
-#    relaxationScales::DenseArray{T,3}
-#    function Relaxation{T}(e::SpinEnvironment) where T<:AbstractFloat
-#        tempScales = copy(e)
-#    end  
-#end
+struct SpinEnvironment{T<:AbstractFloat}
+    t1::T
+    t2::T
+end
+
+struct Environments{T<:AbstractFloat}
+    relaxationConstants::StructVector{SpinEnvironment{T}}
+    function Environments{T}(e::Vector{SpinEnvironment{T}}) where
+        T<:AbstractFloat
+        new(StructVector{SpinEnvironment{T}}(
+            reinterpret(reshape,T, e), dims=1)) 
+    end  
+end
+
+struct SpinEnvironmentScales{T<:AbstractFloat}
+    scaleT1::T
+    scaleT2::T
+    addsT1::T
+end
+
+struct Relaxation{T<:AbstractFloat}
+    relaxationScales::StructVector{SpinEnvironmentScales{T}}
+    function Relaxation{T}(e::Environments{T}, duration::T) where
+        T<:AbstractFloat
+        tempScaleT1 = exp.(-duration ./ e.relaxationConstants.t1)
+        tempScaleT2 = exp.(-duration ./ e.relaxationConstants.t2)
+        tempAddsT1 = 1.0 .- tempScaleT1 
+        new(StructVector{SpinEnvironmentScales{T}}( 
+            scaleT1=tempScaleT1,
+            scaleT2=tempScaleT2,
+            addsT1=tempAddsT1))
+    end  
+end
 #
 #function (f::Relaxation)(s::States)
 #    s.buffers[2] = broadcast(*, f.relaxationScales, s.buffers[1])
