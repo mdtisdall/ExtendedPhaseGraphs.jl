@@ -1,9 +1,10 @@
 # # Spin States
 module SpinStates
 
+using LinearAlgebra
 
 ## Individual spin states
-# Spin states, when represeted as a single object, are simply a tuple with the
+# Spin states, when represeted as a single object, are simply a struct with the
 # the $F^+$, $F^-$, and $Z$ components available as complex values.
 struct State{T<:Complex}
     fPlus::T
@@ -12,9 +13,9 @@ struct State{T<:Complex}
 end
 
 ## Aggregate spin states
-# The total of all $N$ spin states, each representing $M$ spin conditions, are
-# represented as an $M \times N \times 3$ array, organized in memory such that
-# all $F^+$ entries go first, followed by all $F^-$ entries, and finally all
+# The total of all $M$ spin states, each contained within $N$ spin conditions,
+# are represented as an $M \times N \times 3$ array, organized in memory such
+# that all $F^+$ entries go first, followed by all $F^-$ entries, and finally all
 # $Z$ entries.
 #
 # Also, in the name of efficiency, we keep two buffers: a front buffer that
@@ -24,15 +25,27 @@ end
 # buffers, without requiring us to copy the whole system state. 
 struct States{T<:Complex, AT<:AbstractArray{T, 3}}
     buffers::Vector{AT}
-    States{T, AT}(m::Int, n::Int) where
-        {T<:Complex, AT<:AbstractArray} =
-            new([zeros(T, m, n, 3), zeros(T, m, n, 3)])
+    originIndex::Int
+    function States{T, AT}(m::Int, n::Int) where
+        {T<:Complex, AT<:AbstractArray{T, 3}}
+        @assert isodd(m) "m dimension of States must be odd"
+        new([zeros(T, m, n, 3), zeros(T, m, n, 3)], 1 + ((m - 1) / 2))
+    end
 end
+
+function fullyrelaxstates!(s::S) where
+    {S <: States}
+    s.buffers[1][s.originIndex,:,:] .= 1.0
+    nothing
+end
+
+
 
 # We can do that actual buffer-swap by just reversing the order of the buffers
 function swapbuffers!(s::States{T, AT}) where
         {T<:Complex, AT<:AbstractArray}
-    reverse(s.buffers)
+    reverse!(s.buffers)
+    nothing
 end
     
 ##Excitation operation
@@ -68,9 +81,32 @@ struct Excitation{T<:AbstractFloat}
 end
 
 function (f::Excitation)(s::States)
-        reshapedBackBuffer = reshape(s.buffers[2], (:,3))
-        reshapedBackBuffer = reshape(s.buffers[1], (:,3)) * f.opMat
-        swapbuffers!(s)
+    #reshapedBackBuffer = reshape(s.buffers[2], (:,3))
+    #reshapedBackBuffer = reshape(s.buffers[1], (:,3)) * f.opMat
+    mul!(reshape(s.buffers[2],(:,3)), reshape(s.buffers[1], (:,3)), f.opMat)
+    swapbuffers!(s)
+    nothing
 end
+
+## Individual spin environments
+# Spin environments, represented as a single object are just a struct
+# with the relaxation parameters available as floating point values.
+#struct SpinEnvironment{T<:AbstractFloat}
+#    t1::T
+#    t2::T
+#end
+#
+#struct Relaxation(T<:AbstractFloat)
+#    relaxationScales::DenseArray{T,3}
+#    function Relaxation{T}(e::SpinEnvironment) where T<:AbstractFloat
+#        tempScales = copy(e)
+#    end  
+#end
+#
+#function (f::Relaxation)(s::States)
+#    s.buffers[2] = broadcast(*, f.relaxationScales, s.buffers[1])
+#    view(s.buffers[2],(:,s.originIndex,3)) =
+#        broadcast(+, f.relaxationAdds, view(s.buffers[1],(:,s.originIndex,3))) 
+#end
 
 end
