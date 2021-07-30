@@ -24,27 +24,45 @@ end
 # represents the current state of the system, and a back buffer that can be used
 # as the destination for efficient out-of-place operations mutating the state of
 # the system. We can then just do a buffer-swap via exchanging pointers to these
-# buffers, without requiring us to copy the whole system state. 
-struct States{T<:Complex, AT<:AbstractArray{T, 3}}
-    buffers::Vector{AT}
+# buffers, without requiring us to copy the whole system state.
+#
+# Each buffer is represented both by a flat array in an efficient memory layout
+# and a StructArray that provides a convience (inefficient) view for accessing
+# individual entries. For more details on this, you can see this discussion:
+# https://discourse.julialang.org/t/structarrays-memory-layout/65105
+struct States{T<:Complex}
+    buffers::Vector{Tuple{AbstractArray{T}, StructArray{State{T}}}}
     originIndex::Int
-    function States{T, AT}(m::Int, n::Int) where
+    function States{T}(m::Int, n::Int) where
         {T<:Complex, AT<:AbstractArray{T, 3}}
         @assert isodd(m) "m dimension of States must be odd"
-        new([zeros(T, m, n, 3), zeros(T, m, n, 3)], 1 + ((m - 1) / 2))
+        tempA = zeros(T, m, n, 3)
+        tempSA = StructArray{State{T}}(tempA, dims=3)
+        tempB = zeros(T, m, n, 3)
+        tempSB = StructArray{State{T}}(tempB, dims=3)
+        new([(tempA, tempSA), (tempB, tempSB)], 1 + ((m - 1) / 2))
+        #fPlusInit = zeros(T, m, n)
+        #fMinusInit = similar(fPlusInit)
+        #zInit = similar(fPlusInit)
+        #tempSA = StructArray{State{T}}(
+        #    fPlus = fPlusInit,
+        #    fMinus = fMinusInit,
+        #    z = zInit)
+        #new([tempSA, similar(tempSA)], 1 + ((m - 1) / 2))
     end
 end
 
 function fullyrelaxstates!(s::S) where
     {S <: States}
-    s.buffers[1][s.originIndex,:,:] .= 1.0
+    fill!(s.buffers[1][1], 0.0)
+    s.buffers[1][2].z[s.originIndex,:] .= 1.0
     nothing
 end
 
 
 
 # We can do that actual buffer-swap by just reversing the order of the buffers
-function swapbuffers!(s::States{T, AT}) where
+function swapbuffers!(s::States{T}) where
         {T<:Complex, AT<:AbstractArray}
     reverse!(s.buffers)
     nothing
@@ -83,9 +101,7 @@ struct Excitation{T<:AbstractFloat}
 end
 
 function (f::Excitation)(s::States)
-    #reshapedBackBuffer = reshape(s.buffers[2], (:,3))
-    #reshapedBackBuffer = reshape(s.buffers[1], (:,3)) * f.opMat
-    mul!(reshape(s.buffers[2],(:,3)), reshape(s.buffers[1], (:,3)), f.opMat)
+    mul!(reshape(s.buffers[2][1],(:,3)), reshape(s.buffers[1][1], (:,3)), f.opMat)
     swapbuffers!(s)
     nothing
 end
@@ -102,35 +118,46 @@ struct Environments{T<:AbstractFloat}
     relaxationConstants::StructVector{SpinEnvironment{T}}
     function Environments{T}(e::Vector{SpinEnvironment{T}}) where
         T<:AbstractFloat
-        new(StructVector{SpinEnvironment{T}}(
-            reinterpret(reshape,T, e), dims=1)) 
+        new(StructVector(e)) 
     end  
 end
 
 struct SpinEnvironmentScales{T<:AbstractFloat}
     scaleT1::T
     scaleT2::T
-    addsT1::T
+    addT1::T
 end
 
 struct Relaxation{T<:AbstractFloat}
-    relaxationScales::StructVector{SpinEnvironmentScales{T}}
+    relaxationScales::Tuple{
+        AbstractArray{T}, StructVector{SpinEnvironmentScales{T}}}
     function Relaxation{T}(e::Environments{T}, duration::T) where
         T<:AbstractFloat
-        tempScaleT1 = exp.(-duration ./ e.relaxationConstants.t1)
-        tempScaleT2 = exp.(-duration ./ e.relaxationConstants.t2)
-        tempAddsT1 = 1.0 .- tempScaleT1 
-        new(StructVector{SpinEnvironmentScales{T}}( 
-            scaleT1=tempScaleT1,
-            scaleT2=tempScaleT2,
-            addsT1=tempAddsT1))
+        tempA = zeros(T, size(e.relaxationConstants)[1], 3)
+        tempSA = StructVector{SpinEnvironmentScales{T}}(tempA, dims=2)
+        tempSA.scaleT1 .= exp.(-duration ./ e.relaxationConstants.t1)
+        tempSA.scaleT2 .= exp.(-duration ./ e.relaxationConstants.t2)
+        tempSA.addT1 .= 1.0 .- tempSA.scaleT1
+        new((tempA, tempSA))
     end  
 end
-#
-#function (f::Relaxation)(s::States)
-#    s.buffers[2] = broadcast(*, f.relaxationScales, s.buffers[1])
-#    view(s.buffers[2],(:,s.originIndex,3)) =
-#        broadcast(+, f.relaxationAdds, view(s.buffers[1],(:,s.originIndex,3))) 
-#end
+
+function (f::Relaxation)(s::States)
+    broadcast!(*,
+        s.buffers[2][2].fPlus,
+        reshape(f.relaxationScales[2].scaleT2, 1, :),
+        s.buffers[1][2].fPlus)
+    broadcast!(*,
+        s.buffers[2][2].fMinus, 
+        reshape(f.relaxationScales[2].scaleT2, 1, :),
+        s.buffers[1][2].fMinus)
+    broadcast!(*,
+        s.buffers[2][2].z,
+        reshape(f.relaxationScales[2].scaleT1, 1, :),
+        s.buffers[1][2].z) 
+    s.buffers[2][2].z[s.originIndex, :] .+= f.relaxationScales[2].addT1
+    swapbuffers!(s)
+    nothing
+end
 
 end
