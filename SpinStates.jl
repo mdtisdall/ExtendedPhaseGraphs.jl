@@ -18,12 +18,14 @@ end
 # The total of all $M$ spin states, each contained within $N$ spin conditions,
 # are represented as an $M \times N \times 3$ array, organized in memory such
 # that all $F^+$ entries go first, followed by all $F^-$ entries, and finally all
-# $Z$ entries.
+# $Z$ entries. Moreover, the order of $F^-$ entries is reversed, such that the
+# $F^-(-k)$ state appears at the same index as $F^(k)$ and $Z(k)$. This layout
+# is designed to allow excitation operations to be implemented efficiently.
 #
 # Also, in the name of efficiency, we keep two buffers: a front buffer that
 # represents the current state of the system, and a back buffer that can be used
-# as the destination for efficient out-of-place operations mutating the state of
-# the system. We can then just do a buffer-swap via exchanging pointers to these
+# as the destination for out-of-place operations mutating the state of the
+# system. We can then just do a buffer-swap via exchanging pointers to these
 # buffers, without requiring us to copy the whole system state.
 #
 # Each buffer is represented both by a flat array in an efficient memory layout
@@ -156,6 +158,44 @@ function (f::Relaxation)(s::States)
         reshape(f.relaxationScales[2].scaleT1, 1, :),
         s.buffers[1][2].z) 
     s.buffers[2][2].z[s.originIndex, :] .+= f.relaxationScales[2].addT1
+    swapbuffers!(s)
+    nothing
+end
+
+struct Spoiling
+    spoilGrad::Int
+
+    function Spoiling(sg::Int)
+        new(sg)
+    end
+end
+
+function (f::Spoiling)(s::States)
+    circshift!(
+        view(s.buffers[2][1], :, :,  1),
+        view(s.buffers[1][1], :, :, 1),
+        (f.spoilGrad, 0))
+    
+    circshift!(
+        view(s.buffers[2][1], :, :, 2),
+        view(s.buffers[1][1], :, :, 2),
+        (-f.spoilGrad, 0))
+   
+    if f.spoilGrad < 0
+        last = size(s.buffers[1][1])[1] 
+        ind = last - f.spoilGrad + 1
+        view(s.buffers[2][1], ind:last, :, 1)[:] .= 0.0
+        view(s.buffers[2][1], 1:f.spoilGrad, :, 2)[:] .= 0.0
+    elseif f.spoilGrad >0
+        last = size(s.buffers[1][1])[1] 
+        ind = last - f.spoilGrad + 1
+        view(s.buffers[2][1], 1:f.spoilGrad, :, 1)[:] .= 0.0
+        view(s.buffers[2][1], ind:last, :, 2)[:] .= 0.0
+    end
+    
+
+    s.buffers[2][1][:, :, 3] .= s.buffers[1][1][:, :, 3]
+ 
     swapbuffers!(s)
     nothing
 end
