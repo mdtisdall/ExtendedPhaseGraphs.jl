@@ -116,7 +116,7 @@ end
 function (f::Excitation)(s::States)
     mul!(reshape(s.buffers[2][1],(:,3)), reshape(s.buffers[1][1], (:,3)), f.opMat)
     swapbuffers!(s)
-    s 
+    return s 
 end
 
 ## Individual spin environments
@@ -170,7 +170,7 @@ function (f::Relaxation)(s::States)
         s.buffers[1][2].z) 
     s.buffers[2][2].z[s.originIndex, :] .+= f.relaxationScales[2].addT1
     swapbuffers!(s)
-    s 
+    return s 
 end
 
 struct Spoiling
@@ -183,32 +183,31 @@ end
 
 function (f::Spoiling)(s::States)
     circshift!(
-        view(s.buffers[2][1], :, :,  1),
-        view(s.buffers[1][1], :, :, 1),
+        s.buffers[2][2].fPlus,
+        s.buffers[1][2].fPlus,
         (f.spoilGrad, 0))
     
     circshift!(
-        view(s.buffers[2][1], :, :, 2),
-        view(s.buffers[1][1], :, :, 2),
+        s.buffers[2][2].fMinus,
+        s.buffers[1][2].fMinus,
         (-f.spoilGrad, 0))
    
     if f.spoilGrad < 0
         last = size(s.buffers[1][1])[1] 
         ind = last - f.spoilGrad + 1
-        view(s.buffers[2][1], ind:last, :, 1)[:] .= 0.0
-        view(s.buffers[2][1], 1:f.spoilGrad, :, 2)[:] .= 0.0
+        s.buffers[2][2].fPlus[ind:last, :] .= 0.0
+        s.buffers[2][2].fMinus[1:f.spoilGrad, :] .= 0.0
     elseif f.spoilGrad >0
         last = size(s.buffers[1][1])[1] 
         ind = last - f.spoilGrad + 1
-        view(s.buffers[2][1], 1:f.spoilGrad, :, 1)[:] .= 0.0
-        view(s.buffers[2][1], ind:last, :, 2)[:] .= 0.0
+        s.buffers[2][2].fPlus[1:f.spoilGrad, :] .= 0.0
+        s.buffers[2][2].fMinus[ind:last, :] .= 0.0
     end
     
-
-    s.buffers[2][1][:, :, 3] .= s.buffers[1][1][:, :, 3]
+    copyto!(s.buffers[2][2].z, s.buffers[1][2].z)
  
     swapbuffers!(s)
-    s 
+    return s 
 end
 
 end
