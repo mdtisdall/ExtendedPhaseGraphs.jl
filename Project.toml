@@ -1,0 +1,8 @@
+name = "ExtendedPhaseGraphs"
+uuid = "08821f62-87dc-4cfa-9680-a6bc6711d549"
+authors = ["Dylan Tisdall <mtisdall@pennmedicine.upenn.edu>"]
+version = "0.1.0"
+
+[deps]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"

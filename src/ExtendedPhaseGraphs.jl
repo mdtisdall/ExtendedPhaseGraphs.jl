@@ -1,5 +1,5 @@
-# # Spin States
-module SpinStates
+# # ExtendedPhaseGraphs
+module ExtendedPhaseGraphs
 
 using LinearAlgebra
 
@@ -54,8 +54,19 @@ struct States{T<:Complex}
     end
 end
 
-function fullyrelaxstates!(s::S) where
-    {S <: States}
+function fPlus(s::States)
+    s.buffers[1][2].fPlus
+end
+
+function fMinus(s::States)
+    s.buffers[1][2].fPlus
+end
+
+function z(s::States)
+    s.buffers[1][2].z
+end
+
+function fullyrelaxstates!(s::States)
     fill!(s.buffers[1][1], 0.0)
     s.buffers[1][2].z[s.originIndex,:] .= 1.0
     nothing
@@ -105,7 +116,7 @@ end
 function (f::Excitation)(s::States)
     mul!(reshape(s.buffers[2][1],(:,3)), reshape(s.buffers[1][1], (:,3)), f.opMat)
     swapbuffers!(s)
-    nothing
+    s 
 end
 
 ## Individual spin environments
@@ -159,7 +170,7 @@ function (f::Relaxation)(s::States)
         s.buffers[1][2].z) 
     s.buffers[2][2].z[s.originIndex, :] .+= f.relaxationScales[2].addT1
     swapbuffers!(s)
-    nothing
+    s 
 end
 
 struct Spoiling
@@ -197,7 +208,7 @@ function (f::Spoiling)(s::States)
     s.buffers[2][1][:, :, 3] .= s.buffers[1][1][:, :, 3]
  
     swapbuffers!(s)
-    nothing
+    s 
 end
 
 end
