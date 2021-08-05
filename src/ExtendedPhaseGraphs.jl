@@ -60,7 +60,7 @@ function fPlus(s::States)
 end
 
 function fMinus(s::States)
-    s.frontbuffer[][2].fPlus
+    s.frontbuffer[][2].fMinus
 end
 
 function z(s::States)
