@@ -33,7 +33,8 @@ end
 # individual entries. For more details on this, you can see this discussion:
 # https://discourse.julialang.org/t/structarrays-memory-layout/65105
 struct States{T<:Complex}
-    buffers::Vector{Tuple{AbstractArray{T}, StructArray{State{T}}}}
+    frontbuffer::Ref{Tuple{AbstractArray{T}, StructArray{State{T}}}}
+    backbuffer::Ref{Tuple{AbstractArray{T}, StructArray{State{T}}}}
     originIndex::Int
     function States{T}(m::Int, n::Int) where
         {T<:Complex, AT<:AbstractArray{T, 3}}
@@ -42,7 +43,7 @@ struct States{T<:Complex}
         tempSA = StructArray{State{T}}(tempA, dims=3)
         tempB = zeros(T, m, n, 3)
         tempSB = StructArray{State{T}}(tempB, dims=3)
-        new([(tempA, tempSA), (tempB, tempSB)], 1 + ((m - 1) / 2))
+        new((tempA, tempSA), (tempB, tempSB), 1 + ((m - 1) / 2))
         #fPlusInit = zeros(T, m, n)
         #fMinusInit = similar(fPlusInit)
         #zInit = similar(fPlusInit)
@@ -55,20 +56,20 @@ struct States{T<:Complex}
 end
 
 function fPlus(s::States)
-    s.buffers[1][2].fPlus
+    s.frontbuffer[][2].fPlus
 end
 
 function fMinus(s::States)
-    s.buffers[1][2].fPlus
+    s.frontbuffer[][2].fPlus
 end
 
 function z(s::States)
-    s.buffers[1][2].z
+    s.frontbuffer[][2].z
 end
 
 function fullyrelaxstates!(s::States)
-    fill!(s.buffers[1][1], 0.0)
-    s.buffers[1][2].z[s.originIndex,:] .= 1.0
+    fill!(s.frontbuffer[][1], 0.0)
+    z(s)[s.originIndex,:] .= 1.0
     nothing
 end
 
@@ -77,7 +78,7 @@ end
 # We can do that actual buffer-swap by just reversing the order of the buffers
 function swapbuffers!(s::States{T}) where
         {T<:Complex, AT<:AbstractArray}
-    reverse!(s.buffers)
+    s.frontbuffer[], s.backbuffer[] = s.backbuffer[], s.frontbuffer[]
     nothing
 end
     
@@ -114,7 +115,7 @@ struct Excitation{T<:AbstractFloat}
 end
 
 function (f::Excitation)(s::States)
-    mul!(reshape(s.buffers[2][1],(:,3)), reshape(s.buffers[1][1], (:,3)), f.opMat)
+    mul!(reshape(s.backbuffer[][1],(:,3)), reshape(s.frontbuffer[][1], (:,3)), f.opMat)
     swapbuffers!(s)
     return s 
 end
@@ -157,18 +158,18 @@ end
 
 function (f::Relaxation)(s::States)
     broadcast!(*,
-        s.buffers[2][2].fPlus,
+        s.backbuffer[][2].fPlus,
         reshape(f.relaxationScales[2].scaleT2, 1, :),
-        s.buffers[1][2].fPlus)
+        s.frontbuffer[][2].fPlus)
     broadcast!(*,
-        s.buffers[2][2].fMinus, 
+        s.backbuffer[][2].fMinus, 
         reshape(f.relaxationScales[2].scaleT2, 1, :),
-        s.buffers[1][2].fMinus)
+        s.frontbuffer[][2].fMinus)
     broadcast!(*,
-        s.buffers[2][2].z,
+        s.backbuffer[][2].z,
         reshape(f.relaxationScales[2].scaleT1, 1, :),
-        s.buffers[1][2].z) 
-    s.buffers[2][2].z[s.originIndex, :] .+= f.relaxationScales[2].addT1
+        s.frontbuffer[][2].z) 
+    s.backbuffer[][2].z[s.originIndex, :] .+= f.relaxationScales[2].addT1
     swapbuffers!(s)
     return s 
 end
@@ -183,28 +184,28 @@ end
 
 function (f::Spoiling)(s::States)
     circshift!(
-        s.buffers[2][2].fPlus,
-        s.buffers[1][2].fPlus,
+        s.backbuffer[][2].fPlus,
+        s.frontbuffer[][2].fPlus,
         (f.spoilGrad, 0))
     
     circshift!(
-        s.buffers[2][2].fMinus,
-        s.buffers[1][2].fMinus,
+        s.backbuffer[][2].fMinus,
+        s.frontbuffer[][2].fMinus,
         (-f.spoilGrad, 0))
    
     if f.spoilGrad < 0
-        last = size(s.buffers[1][1])[1] 
+        last = size(s.frontbuffer[][1])[1] 
         ind = last - f.spoilGrad + 1
-        s.buffers[2][2].fPlus[ind:last, :] .= 0.0
-        s.buffers[2][2].fMinus[1:f.spoilGrad, :] .= 0.0
+        s.backbuffer[][2].fPlus[ind:last, :] .= 0.0
+        s.backbuffer[][2].fMinus[1:f.spoilGrad, :] .= 0.0
     elseif f.spoilGrad >0
-        last = size(s.buffers[1][1])[1] 
+        last = size(s.frontbuffer[][1])[1] 
         ind = last - f.spoilGrad + 1
-        s.buffers[2][2].fPlus[1:f.spoilGrad, :] .= 0.0
-        s.buffers[2][2].fMinus[ind:last, :] .= 0.0
+        s.backbuffer[][2].fPlus[1:f.spoilGrad, :] .= 0.0
+        s.backbuffer[][2].fMinus[ind:last, :] .= 0.0
     end
     
-    copyto!(s.buffers[2][2].z, s.buffers[1][2].z)
+    copyto!(s.backbuffer[][2].z, s.frontbuffer[][2].z)
  
     swapbuffers!(s)
     return s 
