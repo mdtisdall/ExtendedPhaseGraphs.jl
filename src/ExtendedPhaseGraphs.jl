@@ -3,8 +3,6 @@ module ExtendedPhaseGraphs
 
 using LinearAlgebra
 
-using StructArrays
-
 ## Individual spin states
 # Spin states, when represeted as a single object, are simply a struct with the
 # the $F^+$, $F^-$, and $Z$ components available as complex values.
@@ -35,33 +33,28 @@ end
 mutable struct States{
     T<:Complex,
     AT <: AbstractArray{T, 3},
-    FT <: AbstractArray{T, 2},
-    SA <: StructArray{State{T}, 2}}
+    FT <: AbstractArray{T, 2}
+    }
     frontbuffer::AT
     frontbufferflatview::FT
-    frontbufferSA::SA
     backbuffer::AT
     backbufferflatview::FT
-    backbufferSA::SA
     originIndex::Int
-    function States{T, AT, FT, SA}(m::Int, n::Int) where
+    function States{T, AT, FT}(m::Int, n::Int) where
         {T<:Complex,
         AT<:AbstractArray{T, 3},
-        FT <: AbstractArray{T, 2},
-        SA <: StructArray{State{T}, 2}}
+        FT <: AbstractArray{T, 2}
+        }
         @assert isodd(m) "m dimension of States must be odd"
         tempA = zeros(T, m, n, 3)
         
-        tempSA = StructArray{State{T}}(tempA, dims=3)
         tempB = zeros(T, m, n, 3)
-        tempSB = StructArray{State{T}}(tempB, dims=3)
+        
         new(
             tempA,
             reshape(tempA,(:,3)),
-            tempSA,
             tempB,
             reshape(tempB,(:,3)),
-            tempSB,
             1 + ((m - 1) / 2))
     end
 end
@@ -92,7 +85,6 @@ end
 
 @views function fullyrelaxstates!(s::States)
     fill!(s.frontbuffer, 0.0)
-    #s.frontbufferSA.z[s.originIndex,:] .= 1.0
     #fill!(s.frontbuffer[s.originIndex,:,3], 1.0)
     fill!(z(s)[s.originIndex,:], 1.0)
     nothing
@@ -102,10 +94,10 @@ end
 
 # We can do that actual buffer-swap by just reversing the order of the buffers
 function swapbuffers!(s::States{T}) where {T<:Complex}
-    s.frontbuffer, s.frontbufferflatview, s.frontbufferSA,
-        s.backbuffer, s.backbufferflatview, s.backbufferSA =
-        s.backbuffer, s.backbufferflatview, s.backbufferSA,
-        s.frontbuffer, s.frontbufferflatview, s.frontbufferSA
+    s.frontbuffer, s.frontbufferflatview,
+        s.backbuffer, s.backbufferflatview =
+        s.backbuffer, s.backbufferflatview,
+        s.frontbuffer, s.frontbufferflatview
     nothing
 end
     
