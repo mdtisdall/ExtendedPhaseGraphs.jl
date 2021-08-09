@@ -32,62 +32,90 @@ end
 # and a StructArray that provides a convience (inefficient) view for accessing
 # individual entries. For more details on this, you can see this discussion:
 # https://discourse.julialang.org/t/structarrays-memory-layout/65105
-struct States{T<:Complex}
-    frontbuffer::Ref{Tuple{AbstractArray{T}, StructArray{State{T}}}}
-    backbuffer::Ref{Tuple{AbstractArray{T}, StructArray{State{T}}}}
+mutable struct States{
+    T<:Complex,
+    AT <: AbstractArray{T, 3},
+    FT <: AbstractArray{T, 2},
+    SA <: StructArray{State{T}, 2}}
+    frontbuffer::AT
+    frontbufferflatview::FT
+    frontbufferSA::SA
+    backbuffer::AT
+    backbufferflatview::FT
+    backbufferSA::SA
     originIndex::Int
-    function States{T}(m::Int, n::Int) where
-        {T<:Complex, AT<:AbstractArray{T, 3}}
+    function States{T, AT, FT, SA}(m::Int, n::Int) where
+        {T<:Complex,
+        AT<:AbstractArray{T, 3},
+        FT <: AbstractArray{T, 2},
+        SA <: StructArray{State{T}, 2}}
         @assert isodd(m) "m dimension of States must be odd"
         tempA = zeros(T, m, n, 3)
+        
         tempSA = StructArray{State{T}}(tempA, dims=3)
         tempB = zeros(T, m, n, 3)
         tempSB = StructArray{State{T}}(tempB, dims=3)
-        new((tempA, tempSA), (tempB, tempSB), 1 + ((m - 1) / 2))
-        #fPlusInit = zeros(T, m, n)
-        #fMinusInit = similar(fPlusInit)
-        #zInit = similar(fPlusInit)
-        #tempSA = StructArray{State{T}}(
-        #    fPlus = fPlusInit,
-        #    fMinus = fMinusInit,
-        #    z = zInit)
-        #new([tempSA, similar(tempSA)], 1 + ((m - 1) / 2))
+        new(
+            tempA,
+            reshape(tempA,(:,3)),
+            tempSA,
+            tempB,
+            reshape(tempB,(:,3)),
+            tempSB,
+            1 + ((m - 1) / 2))
     end
 end
 
-function fPlus(s::States)
-    s.frontbuffer[][2].fPlus
+@inline @views function fplus(s::States)
+    s.frontbuffer[:,:,1]
 end
 
-function fMinus(s::States)
-    s.frontbuffer[][2].fMinus
+@inline @views function fminus(s::States)
+    s.frontbuffer[:,:,2]
 end
 
-function z(s::States)
-    s.frontbuffer[][2].z
+@inline @views function z(s::States)
+    s.frontbuffer[:,:,3]
 end
 
-function fullyrelaxstates!(s::States)
-    fill!(s.frontbuffer[][1], 0.0)
-    z(s)[s.originIndex,:] .= 1.0
+@inline @views function fplusbackbuffer(s::States)
+    s.backbuffer[:,:,1]
+end
+
+@inline @views function fminusbackbuffer(s::States)
+    s.backbuffer[:,:,2]
+end
+
+@inline @views function zbackbuffer(s::States)
+    s.backbuffer[:,:,3]
+end
+
+@views function fullyrelaxstates!(s::States)
+    fill!(s.frontbuffer, 0.0)
+    #s.frontbufferSA.z[s.originIndex,:] .= 1.0
+    #fill!(s.frontbuffer[s.originIndex,:,3], 1.0)
+    fill!(z(s)[s.originIndex,:], 1.0)
     nothing
 end
 
 
 
 # We can do that actual buffer-swap by just reversing the order of the buffers
-function swapbuffers!(s::States{T}) where
-        {T<:Complex, AT<:AbstractArray}
-    s.frontbuffer[], s.backbuffer[] = s.backbuffer[], s.frontbuffer[]
+function swapbuffers!(s::States{T}) where {T<:Complex}
+    s.frontbuffer, s.frontbufferflatview, s.frontbufferSA,
+        s.backbuffer, s.backbufferflatview, s.backbufferSA =
+        s.backbuffer, s.backbufferflatview, s.backbufferSA,
+        s.frontbuffer, s.frontbufferflatview, s.frontbufferSA
     nothing
 end
     
 ##Excitation operation
-struct Excitation{T<:AbstractFloat}
+struct Excitation{T<:AbstractFloat, AT <: AbstractArray{Complex{T}, 2}}
 
-    opMat::DenseArray{Complex{T}, 2}
+    opMat::AT
 
-    function Excitation(flipAngle::T, phase::T) where T<:AbstractFloat
+    function Excitation{T, AT}(flipAngle::T, phase::T) where
+        {T<:AbstractFloat, AT<:AbstractArray{Complex{T}, 2}}
         cosAlpha = cos(flipAngle)
         sinAlpha = sin(flipAngle)
         alphaDiv2 = flipAngle/2.0
@@ -110,14 +138,15 @@ struct Excitation{T<:AbstractFloat}
         tempMat[7] = (-0.5im) * expPhaseInv * sinAlpha
         tempMat[8] = (0.5im) * expPhase * sinAlpha
         tempMat[9] = cosAlpha
-        new{T}(tempMat)
+        new{T,AT}(tempMat)
     end
 end
 
+
 function (f::Excitation)(s::States)
-    mul!(reshape(s.backbuffer[][1],(:,3)), reshape(s.frontbuffer[][1], (:,3)), f.opMat)
+    mul!(s.backbufferflatview, s.frontbufferflatview, f.opMat)
     swapbuffers!(s)
-    return s 
+    nothing
 end
 
 ## Individual spin environments
@@ -136,42 +165,48 @@ struct Environments{T<:AbstractFloat}
     end  
 end
 
-struct SpinEnvironmentScales{T<:AbstractFloat}
-    scaleT1::T
-    scaleT2::T
-    addT1::T
-end
-
-struct Relaxation{T<:AbstractFloat}
-    relaxationScales::Tuple{
-        AbstractArray{T}, StructVector{SpinEnvironmentScales{T}}}
-    function Relaxation{T}(e::Environments{T}, duration::T) where
-        T<:AbstractFloat
-        tempA = zeros(T, size(e.relaxationConstants)[1], 3)
-        tempSA = StructVector{SpinEnvironmentScales{T}}(tempA, dims=2)
-        tempSA.scaleT1 .= exp.(-duration ./ e.relaxationConstants.t1)
-        tempSA.scaleT2 .= exp.(-duration ./ e.relaxationConstants.t2)
-        tempSA.addT1 .= 1.0 .- tempSA.scaleT1
-        new((tempA, tempSA))
+struct Relaxation{
+    T<:AbstractFloat,
+    VT <: AbstractVector{T},
+    AT <: AbstractArray{T, 2}}
+    scalet1::VT
+    scalet1matrixview::AT
+    scalet2::VT
+    scalet2matrixview::AT
+    addt1::VT
+    function Relaxation{T, VT, AT}(e::Environments{T}, duration::T) where
+        { T<:AbstractFloat, VT <: AbstractVector{T}, AT <: AbstractArray{T, 2} }
+        scalet1 = zeros(T, size(e.relaxationConstants)[1])
+        scalet2 = similar(scalet1) 
+        addt1 = similar(scalet1) 
+        scalet1 .= exp.(-duration ./ e.relaxationConstants.t1)
+        scalet2 .= exp.(-duration ./ e.relaxationConstants.t2)
+        addt1 .= 1.0 .- scalet1
+        new(
+            scalet1,
+            reshape(scalet1, 1, :),
+            scalet2,
+            reshape(scalet2, 1, :),
+            addt1)
     end  
 end
 
-function (f::Relaxation)(s::States)
+@views function (f::Relaxation)(s::States)
     broadcast!(*,
-        s.backbuffer[][2].fPlus,
-        reshape(f.relaxationScales[2].scaleT2, 1, :),
-        s.frontbuffer[][2].fPlus)
+        fplusbackbuffer(s),
+        f.scalet2matrixview,
+        fplus(s))
     broadcast!(*,
-        s.backbuffer[][2].fMinus, 
-        reshape(f.relaxationScales[2].scaleT2, 1, :),
-        s.frontbuffer[][2].fMinus)
+        fminusbackbuffer(s), 
+        f.scalet2matrixview,
+        fminus(s))
     broadcast!(*,
-        s.backbuffer[][2].z,
-        reshape(f.relaxationScales[2].scaleT1, 1, :),
-        s.frontbuffer[][2].z) 
-    s.backbuffer[][2].z[s.originIndex, :] .+= f.relaxationScales[2].addT1
+        zbackbuffer(s),
+        f.scalet1matrixview,
+        z(s)) 
+    zbackbuffer(s)[s.originIndex, :] .+= f.addt1
     swapbuffers!(s)
-    return s 
+    nothing
 end
 
 struct Spoiling
@@ -182,33 +217,33 @@ struct Spoiling
     end
 end
 
-function (f::Spoiling)(s::States)
+@views function (f::Spoiling)(s::States)
     circshift!(
-        s.backbuffer[][2].fPlus,
-        s.frontbuffer[][2].fPlus,
+        fplusbackbuffer(s),
+        fplus(s),
         (f.spoilGrad, 0))
     
     circshift!(
-        s.backbuffer[][2].fMinus,
-        s.frontbuffer[][2].fMinus,
+        fminusbackbuffer(s),
+        fminus(s),
         (-f.spoilGrad, 0))
-   
+
     if f.spoilGrad < 0
-        last = size(s.frontbuffer[][1])[1] 
+        last = size(s.frontbuffer)[1]
         ind = last - f.spoilGrad + 1
-        s.backbuffer[][2].fPlus[ind:last, :] .= 0.0
-        s.backbuffer[][2].fMinus[1:f.spoilGrad, :] .= 0.0
+        fplusbackbuffer(s)[ind:last, :] .= 0.0
+        fminusbackbuffer(s)[1:f.spoilGrad, :] .= 0.0
     elseif f.spoilGrad >0
-        last = size(s.frontbuffer[][1])[1] 
+        last = size(s.frontbuffer)[1] 
         ind = last - f.spoilGrad + 1
-        s.backbuffer[][2].fPlus[1:f.spoilGrad, :] .= 0.0
-        s.backbuffer[][2].fMinus[ind:last, :] .= 0.0
+        fplusbackbuffer(s)[1:f.spoilGrad, :] .= 0.0
+        fminusbackbuffer(s)[ind:last, :] .= 0.0
     end
     
-    copyto!(s.backbuffer[][2].z, s.frontbuffer[][2].z)
+    copyto!(zbackbuffer(s), z(s))
  
     swapbuffers!(s)
-    return s 
+    nothing 
 end
 
 end
