@@ -184,7 +184,7 @@ struct Relaxation{
     addt1::VT
     function Relaxation{T, VT, AT}(e::Environments{T}, duration::T) where
         { T<:AbstractFloat, VT <: AbstractVector{T}, AT <: AbstractArray{T, 2} }
-        scalet1 = zeros(T, size(e.relaxationConstants, 1))::VT
+        scalet1 = zeros(T, size(e.relaxationconstants, 1))::VT
         scalet2 = similar(scalet1) 
         addt1 = similar(scalet1) 
         scalet1 .= exp.(-duration ./ t1vals(e))
