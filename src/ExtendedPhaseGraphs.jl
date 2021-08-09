@@ -3,6 +3,8 @@ module ExtendedPhaseGraphs
 
 using LinearAlgebra
 
+using StructArrays
+
 ## Individual spin states
 # Spin states, when represeted as a single object, are simply a struct with the
 # the $F^+$, $F^-$, and $Z$ components available as complex values.
@@ -60,23 +62,23 @@ mutable struct States{
 end
 
 @inline @views function fplus(s::States)
-    s.frontbuffer[:,:,1]
+    @inbounds s.frontbuffer[:,:,1]
 end
 
 @inline @views function fminus(s::States)
-    s.frontbuffer[:,:,2]
+    @inbounds s.frontbuffer[:,:,2]
 end
 
 @inline @views function z(s::States)
-    s.frontbuffer[:,:,3]
+    @inbounds s.frontbuffer[:,:,3]
 end
 
 @inline @views function fplusbackbuffer(s::States)
-    s.backbuffer[:,:,1]
+    @inbounds s.backbuffer[:,:,1]
 end
 
 @inline @views function fminusbackbuffer(s::States)
-    s.backbuffer[:,:,2]
+    @inbounds s.backbuffer[:,:,2]
 end
 
 @inline @views function zbackbuffer(s::States)
