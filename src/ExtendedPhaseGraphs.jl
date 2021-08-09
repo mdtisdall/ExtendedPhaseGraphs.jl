@@ -151,12 +151,26 @@ struct SpinEnvironment{T<:AbstractFloat}
     t2::T
 end
 
-struct Environments{T<:AbstractFloat}
-    relaxationConstants::StructVector{SpinEnvironment{T}}
-    function Environments{T}(e::Vector{SpinEnvironment{T}}) where
-        T<:AbstractFloat
-        new(StructVector(e)) 
+struct Environments{T<:AbstractFloat, AT <:AbstractMatrix{T}}
+    relaxationconstants::AT
+    function Environments{T, AT}(e::Vector{SpinEnvironment{T}}) where
+        {T<:AbstractFloat, AT <:AbstractMatrix{T}}
+        temprelaxationconstants = zeros(T, (length(e), 2))::AT
+        for (index, value) in enumerate(e)
+            temprelaxationconstants[index,1] = value.t1
+            temprelaxationconstants[index,2] = value.t2
+        end
+        new(temprelaxationconstants) 
     end  
+end
+
+
+@inline @views function t1vals(e::Environments)
+    e.relaxationconstants[:,1]
+end
+
+@inline @views function t2vals(e::Environments)
+    e.relaxationconstants[:,2]
 end
 
 struct Relaxation{
@@ -170,11 +184,11 @@ struct Relaxation{
     addt1::VT
     function Relaxation{T, VT, AT}(e::Environments{T}, duration::T) where
         { T<:AbstractFloat, VT <: AbstractVector{T}, AT <: AbstractArray{T, 2} }
-        scalet1 = zeros(T, size(e.relaxationConstants)[1])
+        scalet1 = zeros(T, size(e.relaxationConstants, 1))::VT
         scalet2 = similar(scalet1) 
         addt1 = similar(scalet1) 
-        scalet1 .= exp.(-duration ./ e.relaxationConstants.t1)
-        scalet2 .= exp.(-duration ./ e.relaxationConstants.t2)
+        scalet1 .= exp.(-duration ./ t1vals(e))
+        scalet2 .= exp.(-duration ./ t2vals(e))
         addt1 .= 1.0 .- scalet1
         new(
             scalet1,
